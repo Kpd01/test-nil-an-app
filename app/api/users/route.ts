@@ -12,11 +12,14 @@ export async function GET() {
     const { data, error } = await supabase.from("users").select("*").order("created_at", { ascending: false })
 
     if (error) {
+      console.error("Supabase error:", error)
       throw error
     }
 
     const response = NextResponse.json(data || [])
     response.headers.set("Cache-Control", "no-cache, no-store, must-revalidate")
+    response.headers.set("Pragma", "no-cache")
+    response.headers.set("Expires", "0")
 
     return response
   } catch (error) {

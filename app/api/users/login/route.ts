@@ -1,6 +1,7 @@
+import { createServerSupabaseClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
-import { createServerSupabaseClient } from "@/lib/supabase"
 
+// Update the POST function to ensure proper user creation and response
 export async function POST(request: Request) {
   const supabase = createServerSupabaseClient()
 
@@ -16,60 +17,73 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Username is required" }, { status: 400 })
     }
 
-    // Try to find existing user
-    const { data: existingUser, error: fetchError } = await supabase
+    const normalizedUsername = username.toLowerCase().trim()
+
+    // First, try to find existing user
+    const { data: existingUser, error: findError } = await supabase
       .from("users")
       .select("*")
-      .eq("username", username.toLowerCase())
+      .eq("username", normalizedUsername)
       .single()
 
-    if (fetchError && fetchError.code !== "PGRST116") {
-      throw fetchError
-    }
-
-    if (existingUser) {
-      // Update last active and session count
-      const { data, error } = await supabase
+    if (existingUser && !findError) {
+      // Update last_active and session_count for existing user
+      const { data: updatedUser, error: updateError } = await supabase
         .from("users")
         .update({
           last_active: new Date().toISOString(),
-          session_count: existingUser.session_count + 1,
+          session_count: (existingUser.session_count || 0) + 1,
+          is_active: true,
         })
         .eq("id", existingUser.id)
         .select()
         .single()
 
-      if (error) {
-        throw error
+      if (updateError) {
+        console.error("Error updating existing user:", updateError)
+        throw updateError
       }
 
-      return NextResponse.json({ user: data, isNewUser: false })
-    } else {
-      // Create new user
-      const userAgent = request.headers.get("user-agent") || ""
-      const forwarded = request.headers.get("x-forwarded-for")
-      const ipAddress = forwarded ? forwarded.split(",")[0] : request.headers.get("x-real-ip")
-
-      const { data, error } = await supabase
-        .from("users")
-        .insert({
-          username: username.toLowerCase(),
-          display_name: username,
-          user_agent: userAgent,
-          ip_address: ipAddress,
-          last_active: new Date().toISOString(),
-        })
-        .select()
-        .single()
-
-      if (error) {
-        throw error
-      }
-
-      return NextResponse.json({ user: data, isNewUser: true })
+      return NextResponse.json({
+        user: updatedUser,
+        isNewUser: false,
+      })
     }
+
+    // Create new user if not found
+    const userAgent = request.headers.get("user-agent") || ""
+    const forwarded = request.headers.get("x-forwarded-for")
+    const ipAddress = forwarded ? forwarded.split(",")[0] : request.headers.get("x-real-ip")
+
+    const { data: newUser, error: createError } = await supabase
+      .from("users")
+      .insert({
+        username: normalizedUsername,
+        display_name: username, // Keep original case for display
+        user_agent: userAgent,
+        ip_address: ipAddress,
+        last_active: new Date().toISOString(),
+        session_count: 1,
+        is_active: true,
+        total_points: 0,
+        quiz_completed: false,
+        messages_sent: 0,
+        photos_uploaded: 0,
+      })
+      .select()
+      .single()
+
+    if (createError) {
+      console.error("Error creating new user:", createError)
+      throw createError
+    }
+
+    return NextResponse.json({
+      user: newUser,
+      isNewUser: true,
+    })
   } catch (error) {
-    console.error("Error during login:", error)
-    return NextResponse.json({ error: "Failed to login" }, { status: 500 })
+    console.error("Login error:", error)
+    return NextResponse.json({ error: "Failed to process login" }, { status: 500 })
   }
 }
